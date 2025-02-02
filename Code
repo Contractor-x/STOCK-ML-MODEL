@@ -1,0 +1,83 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import MinMaxScaler
+from keras.models import Sequential
+from keras.layers import LSTM, Dense, Dropout
+from keras.callbacks import EarlyStopping, ModelCheckpoint
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error
+
+# Load the stock data from a CSV file
+df = pd.read_csv('stock_data.csv')
+
+# Data Cleaning
+df['Date'] = pd.to_datetime(df['Date'])
+df.set_index('Date', inplace=True)
+df.fillna(method='ffill', inplace=True)
+
+# Feature Engineering
+df['Price_Change'] = df['Close'].diff()
+df['Volatility'] = df['Close'].rolling(window=5).std()
+df['Moving_Average'] = df['Close'].rolling(window=20).mean()
+df.dropna(inplace=True)
+
+# Select features and target variable
+features = df[['Open', 'High', 'Low', 'Close', 'Volume', 'Price_Change', 'Volatility', 'Moving_Average']]
+target = df['Close'].shift(-1)
+features = features[:-1]
+target = target[:-1]
+
+# Train-Test Split
+X_train, X_test, y_train, y_test = train_test_split(features, target, test_size=0.2, random_state=42)
+
+# Data Normalization
+scaler_X = MinMaxScaler()
+scaler_y = MinMaxScaler()
+
+X_train_scaled = scaler_X.fit_transform(X_train)
+X_test_scaled = scaler_X.transform(X_test)
+
+y_train_scaled = scaler_y.fit_transform(y_train.values.reshape(-1, 1))
+y_test_scaled = scaler_y.transform(y_test.values.reshape(-1, 1))
+
+# Reshape the data for LSTM
+X_train_scaled = np.reshape(X_train_scaled, (X_train_scaled.shape[0], X_train_scaled.shape[1], 1))
+X_test_scaled = np.reshape(X_test_scaled, (X_test_scaled.shape[0], X_test_scaled.shape[1], 1))
+
+# Build the LSTM Model
+model = Sequential()
+model.add(LSTM(50, return_sequences=True, input_shape=(X_train_scaled.shape[1], 1)))
+model.add(Dropout(0.2))
+model.add(LSTM(50, return_sequences=False))
+model.add(Dropout(0.2))
+model.add(Dense(1))
+
+# Compile the Model
+model.compile(optimizer='adam', loss='mean_squared_error')
+
+# Callbacks for Early Stopping and Model Checkpointing
+early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+model_checkpoint = ModelCheckpoint('best_model.h5', save_best_only=True, monitor='val_loss', mode='min')
+
+# Train the Model
+model.fit(X_train_scaled, y_train_scaled, epochs=100, batch_size=32, 
+          validation_split=0.2, callbacks=[early_stopping, model_checkpoint])
+
+# Evaluate the Model
+predictions_scaled = model.predict(X_test_scaled)
+predictions = scaler_y.inverse_transform(predictions_scaled)
+
+# Calculate RMSE
+rmse = np.sqrt(mean_squared_error(y_test, predictions))
+print(f'Root Mean Squared Error: {rmse}')
+
+# Visualization
+plt.figure(figsize=(14, 5))
+plt.plot(df.index[-len(y_test):], y_test, color='blue', label='Actual Prices')
+plt.plot(df.index[-len(y_test):], predictions, color='red', label='Predicted Prices')
+plt.title('Stock Price Prediction')
+plt.xlabel('Date')
+plt.ylabel('Price')
+plt.legend()
+plt.show()
